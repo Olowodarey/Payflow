@@ -1,15 +1,38 @@
-# GiGipay
 
-GigiPay is a Celo-powered payment protocol designed to make on-chain transfers faster, cheaper, and more inclusive. With GigiPay, users can send funds to multiple wallets in a single transaction, significantly reducing gas costs and simplifying large-scale payouts.
-GigiPay also introduces claim-code payments, allowing users to send crypto without needing the recipient’s wallet address. Instead, a secure claim code or shareable link is generated, which the recipient can redeem at any time — even if they don’t yet have a wallet.
 
-Other key features include:
-    • CSV batch uploads: Organizations can upload wallet addresses to execute mass payments effortlessly.
-    • Giveaway and rewards dashboard: Track who has claimed rewards and reclaim unclaimed funds after expiration.
-    • Optional gasless redemption: Users can redeem claim codes without paying gas, lowering barriers for first-time users.
-    • Wallet abstraction via Gmail: New users can create a wallet using just their Gmail, avoiding seed phrase complexity.
-    • Future off-ramp integration: Plans to integrate APIs enabling stablecoins like cUSD to be converted into local currencies such as Naira.
-Built on Celo’s mobile-first, carbon-negative blockchain, and leveraging stablecoins for price stability, GigiPay delivers a seamless and inclusive payment experience for communities, DAOs, businesses, and organizations managing bulk transfers or reward campaigns.
+#  GigiPay
+
+**GigiPay** is a **Celo-powered payment protocol** designed to make on-chain transfers **faster, cheaper, and more inclusive**.  
+With GigiPay, users can send funds to multiple wallets in a single transaction — significantly reducing gas costs and simplifying large-scale payouts.
+
+GigiPay also introduces **claim-code payments**, allowing users to send crypto **without needing the recipient’s wallet address**.  
+Instead, a secure claim code or shareable link is generated, which the recipient can redeem at any time — even if they don’t yet have a wallet.
+
+---
+
+##  Key Features
+
+- **CSV Batch Uploads:**  
+  Organizations can upload wallet addresses to execute mass payments effortlessly.  
+
+- **Giveaway & Rewards Dashboard:**  
+  Track who has claimed rewards and reclaim unclaimed funds after expiration.  
+
+- **Optional Gasless Redemption:**  
+  Users can redeem claim codes without paying gas, lowering barriers for first-time users.  
+
+- **Wallet Abstraction via Gmail:**  
+  New users can create a wallet using just their Gmail, avoiding seed phrase complexity.  
+
+- **Future Off-Ramp Integration:**  
+  Planned integration of APIs enabling stablecoins like **cUSD** to be converted into local currencies such as **Naira**.  
+
+---
+
+##  Built on Celo
+
+GigiPay is built on **Celo’s mobile-first, carbon-negative blockchain**, leveraging stablecoins for **price stability** and a smooth user experie
+
 ## Getting Started
 
 1. Install dependencies:
