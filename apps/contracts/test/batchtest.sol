@@ -192,7 +192,7 @@ contract BatchTfTest is Test {
         batchTf.batchTransfer{value: 3 ether}(address(0), recipients, amounts); // Sent 3 instead of 4
     }
     
-    function test_RevertWhenInsufficientAllowance() public {
+    function test_RevertWhenInsufficientAllowance1() public {
         address[] memory recipients = new address[](4);
         recipients[0] = recipient1;
         recipients[1] = recipient2;
@@ -231,5 +231,24 @@ contract BatchTfTest is Test {
         vm.prank(sender);
         vm.expectRevert();
         batchTf.batchTransfer{value: 4 ether}(address(0), recipients, amounts);
+    }
+
+     function test_RevertWhenInsufficientAllowance() public {
+        address[] memory recipients = new address[](4);
+        recipients[0] = recipient1;
+        recipients[1] = recipient2;
+        recipients[2] = recipient3;
+        recipients[3] = recipient4;
+        
+        uint256[] memory amounts = new uint256[](4);
+        amounts[0] = 100 * 10**18;
+        amounts[1] = 100 * 10**18;
+        amounts[2] = 100 * 10**18;
+        amounts[3] = 100 * 10**18;
+        
+        // Don't approve tokens
+        vm.prank(sender);
+        vm.expectRevert("Insufficient allowance");
+        batchTf.batchTransfer(address(mockToken), recipients, amounts);
     }
 }
