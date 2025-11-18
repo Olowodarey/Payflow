@@ -79,9 +79,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setMounted(true)
   }, [])
 
-  // Show children without wallet functionality during SSR
+  // Don't render wallet provider during SSR
   if (!mounted) {
-    return <>{children}</>
+    return <div suppressHydrationWarning>{children}</div>
   }
 
   return <WalletProviderInner>{children}</WalletProviderInner>

@@ -1,42 +1,76 @@
 "use client";
 
-import React, { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, ArrowRight, Check } from "lucide-react";
-import UploadRecipients, { UploadRecipient } from "@/components/batch-payment/UploadRecipients";
+import React, { useState, useEffect } from "react";
+import { useAccount, useBalance } from "wagmi";
+import { useBatchTransfer, useContractPaused } from "@/hooks/useBatchTransfer";
+import { useTokenApproval, useTokenAllowance, useTokenBalance } from "@/hooks/useTokenApproval";
+import { TOKEN_ADDRESSES } from "@/lib/contracts/batchTransfer";
+import { Address, formatUnits, parseUnits } from "viem";
+import { defineChain } from "viem";
+import { UploadRecipient } from "@/components/batch-payment/UploadRecipients";
+import { NetworkWarning } from "@/components/batch-payment/NetworkWarning";
+import { ProgressIndicator } from "@/components/batch-payment/ProgressIndicator";
+import { RecipientForm } from "@/components/batch-payment/RecipientForm";
+import { ReviewStep } from "@/components/batch-payment/ReviewStep";
+import { SuccessStep } from "@/components/batch-payment/SuccessStep";
 
-// UI-only token config (no blockchain deps)
+// Define Celo Sepolia chain
+const celoSepolia = defineChain({
+  id: 11142220,
+  name: "Celo Sepolia",
+  nativeCurrency: { decimals: 18, name: "CELO", symbol: "CELO" },
+  rpcUrls: { default: { http: ["https://forno.celo-sepolia.celo-testnet.org"] } },
+  blockExplorers: { default: { name: "Celo Sepolia Blockscout", url: "https://celo-sepolia.blockscout.com" } },
+  testnet: true,
+});
+
+// Token configuration
 const TOKENS = {
-  STRK: { symbol: "STRK", name: "Stark", icon: "💎" },
-  USDC: { symbol: "USDC", name: "USD Coin", icon: "💵" },
-  CELO: { symbol: "CELO", name: "Celo", icon: "🟡" },
+  CELO: { symbol: "CELO", name: "Celo", icon: "🟡", address: TOKEN_ADDRESSES.CELO, decimals: 18 },
+  cUSD: { symbol: "cUSD", name: "Celo Dollar", icon: "💵", address: TOKEN_ADDRESSES.cUSD, decimals: 18 },
+  USDC: { symbol: "USDC", name: "USD Coin", icon: "💰", address: TOKEN_ADDRESSES.USDC, decimals: 6 },
+  cEUR: { symbol: "cEUR", name: "Celo Euro", icon: "💶", address: TOKEN_ADDRESSES.cEUR, decimals: 18 },
 } as const;
 type TokenSymbol = keyof typeof TOKENS;
-
 type Recipient = { id: string; address: string; amount: string };
 
 export default function BatchPaymentPage() {
   const [step, setStep] = useState(1);
-  const [selectedToken, setSelectedToken] = useState<TokenSymbol>("STRK");
+  const [selectedToken, setSelectedToken] = useState<TokenSymbol>("CELO");
   const [recipients, setRecipients] = useState<Recipient[]>([{ id: "1", address: "", amount: "" }]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
 
-  // Inline notice to replace toasts
-  const [notice, setNotice] = useState<{
-    type: "success" | "error" | "info";
-    message: string;
-  } | null>(null);
+  // Wagmi hooks
+  const { address, isConnected, chain } = useAccount();
+  const { isPaused } = useContractPaused();
+  const selectedTokenConfig = TOKENS[selectedToken];
+  const isNativeCELO = selectedTokenConfig.address === TOKEN_ADDRESSES.CELO;
+
+  // Balance hooks
+  const { data: nativeBalance } = useBalance({ address });
+  const { balance: tokenBalance, refetch: refetchTokenBalance } = useTokenBalance(
+    selectedTokenConfig.address,
+    address
+  );
+
+  // Contract interaction hooks
+  const { executeBatchTransfer, hash, isPending, isConfirming, isConfirmed, error } = useBatchTransfer();
+  const {
+    approve,
+    isPending: isApproving,
+    isConfirming: isApprovingConfirming,
+    isConfirmed: isApproved,
+  } = useTokenApproval(selectedTokenConfig.address);
+  const { allowance, refetch: refetchAllowance } = useTokenAllowance(selectedTokenConfig.address, address);
+
   const notify = ({ description, variant }: { description: string; variant?: "destructive" }) => {
     setNotice({ type: variant === "destructive" ? "error" : "success", message: description });
     setTimeout(() => setNotice(null), 2500);
   };
 
-  // Shared input styles (reuse style from create-payment)
-  const inputClass =
-    "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
-
+  // Recipient management
   const addRecipient = () => {
     const newId = (Math.max(...recipients.map((r) => parseInt(r.id)), 0) + 1).toString();
     setRecipients([...recipients, { id: newId, address: "", amount: "" }]);
@@ -60,7 +94,6 @@ export default function BatchPaymentPage() {
   };
 
   const validateForm = () => {
-    // Basic checks: all addresses and amounts present, amounts > 0
     if (recipients.some((r) => !r.address.trim() || !r.amount.trim())) {
       notify({ description: "Please fill in every recipient address and amount.", variant: "destructive" });
       return false;
@@ -69,7 +102,6 @@ export default function BatchPaymentPage() {
       notify({ description: "All amounts must be greater than 0.", variant: "destructive" });
       return false;
     }
-    // Optional: naive address format check (length)
     if (recipients.some((r) => r.address.length < 6)) {
       notify({ description: "One or more wallet addresses look invalid.", variant: "destructive" });
       return false;
@@ -77,26 +109,51 @@ export default function BatchPaymentPage() {
     return true;
   };
 
-  const handleNext = () => {
-    if (step === 1) {
-      if (!validateForm()) return;
-      setStep(2);
-    } else if (step === 2) {
-      handleSubmit();
-    }
+  const needsApproval = () => {
+    if (isNativeCELO) return false;
+    const total = totalAmount();
+    const totalInWei = parseUnits(total.toString(), selectedTokenConfig.decimals);
+    return allowance < totalInWei;
+  };
+
+  const handleApprove = () => {
+    const total = totalAmount();
+    approve(total.toString(), selectedTokenConfig.decimals);
   };
 
   const handleSubmit = async () => {
-    setIsSubmitting(true);
+    if (!address) {
+      notify({ description: "Please connect your wallet", variant: "destructive" });
+      return;
+    }
+    if (chain?.id !== celoSepolia.id) {
+      notify({ description: "Please switch to Celo Sepolia Testnet", variant: "destructive" });
+      return;
+    }
+    if (isPaused) {
+      notify({ description: "Contract is currently paused", variant: "destructive" });
+      return;
+    }
+
+    const total = totalAmount();
+    const totalInWei = parseUnits(total.toString(), selectedTokenConfig.decimals);
+    const currentBalance = isNativeCELO ? nativeBalance?.value ?? 0n : tokenBalance;
+
+    if (currentBalance < totalInWei) {
+      notify({ description: `Insufficient ${selectedToken} balance`, variant: "destructive" });
+      return;
+    }
+
+    if (!isNativeCELO && needsApproval()) {
+      notify({ description: "Please approve token spending first", variant: "destructive" });
+      return;
+    }
+
     try {
-      // Simulate API/processing delay
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      notify({ description: "Batch submitted (simulation)." });
-      setStep(3);
-    } catch {
-      notify({ description: "Failed to submit batch.", variant: "destructive" });
-    } finally {
-      setIsSubmitting(false);
+      const batchRecipients = recipients.map((r) => ({ address: r.address as Address, amount: r.amount }));
+      executeBatchTransfer(selectedTokenConfig.address, batchRecipients, selectedTokenConfig.decimals);
+    } catch (err: any) {
+      notify({ description: err.message || "Failed to submit batch", variant: "destructive" });
     }
   };
 
@@ -110,10 +167,53 @@ export default function BatchPaymentPage() {
     a.click();
   };
 
+  const handleNext = () => {
+    if (step === 1) {
+      if (!validateForm()) return;
+      setStep(2);
+    } else if (step === 2) {
+      handleSubmit();
+    }
+  };
+
+  const getBalance = () => {
+    if (isNativeCELO) {
+      return nativeBalance?.formatted ? `${parseFloat(nativeBalance.formatted).toFixed(4)} ${selectedToken}` : "Loading...";
+    }
+    return tokenBalance ? `${parseFloat(formatUnits(tokenBalance, selectedTokenConfig.decimals)).toFixed(4)} ${selectedToken}` : "Loading...";
+  };
+
+  // Effects
+  useEffect(() => {
+    if (isApproved) {
+      refetchAllowance();
+      notify({ description: "Token approval confirmed! You can now submit the batch." });
+    }
+  }, [isApproved]);
+
+  useEffect(() => {
+    if (isConfirmed && hash) {
+      setTxHash(hash);
+      setStep(3);
+      refetchTokenBalance();
+      notify({ description: "Batch transfer completed successfully!" });
+    }
+  }, [isConfirmed, hash]);
+
+  useEffect(() => {
+    if (error) {
+      notify({ description: error.message || "Transaction failed", variant: "destructive" });
+    }
+  }, [error]);
+
+  const isCorrectNetwork = chain?.id === celoSepolia.id;
+
   return (
     <div className="flex flex-col min-h-screen">
       <div className="flex-1 py-8 md:py-12 px-4 sm:px-6 lg:px-8">
         <div className="container mx-auto max-w-2xl">
+          <NetworkWarning isConnected={isConnected} isCorrectNetwork={isCorrectNetwork} isPaused={isPaused} />
+
           {notice && (
             <div
               className={`mb-6 rounded-md border p-3 text-sm ${
@@ -126,227 +226,58 @@ export default function BatchPaymentPage() {
             </div>
           )}
 
-          {/* Progress Indicator */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              {[1, 2, 3].map((s) => (
-                <div key={s} className="flex flex-col items-center flex-1">
-                  <div className="flex items-center w-full">
-                    {s > 1 && (
-                      <div className={`h-1 flex-1 rounded transition-colors ${s <= step ? "bg-success" : "bg-muted"}`} />
-                    )}
-                    <div
-                      className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors ${
-                        s < step
-                          ? "bg-success text-success-foreground"
-                          : s === step
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground"
-                      } ${s === 1 ? "ml-0" : "mx-2"} ${s === 3 ? "mr-0" : ""}`}
-                    >
-                      {s < step ? <Check className="h-4 w-4" /> : s}
-                    </div>
-                    {s < 3 && (
-                      <div className={`h-1 flex-1 rounded transition-colors ${s < step ? "bg-success" : "bg-muted"}`} />
-                    )}
-                  </div>
-                  <span className="text-xs sm:text-sm text-muted-foreground mt-2">
-                    {s === 1 ? "Setup" : s === 2 ? "Review" : "Complete"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <ProgressIndicator currentStep={step} />
 
-          {/* Step 1: Enter recipients */
-          }
-          {step === 1 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Batch Payment</CardTitle>
-                <CardDescription>Add recipient wallet addresses and amounts</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-2">
-                  <label htmlFor="token" className="text-sm font-medium">
-                    Token
-                  </label>
-                  <select
-                    id="token"
-                    className={inputClass}
-                    value={selectedToken}
-                    onChange={(e) => setSelectedToken((e.target as HTMLSelectElement).value as TokenSymbol)}
-                  >
-                    {Object.entries(TOKENS).map(([symbol, token]) => (
-                      <option key={symbol} value={symbol}>
-                        {token.symbol} - {token.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">Recipients</span>
-                    <div className="flex gap-2">
-                      <Button onClick={() => setShowUpload((v) => !v)} size="sm" variant="outline">
-                        {showUpload ? "Manual entry" : "Import from file"}
-                      </Button>
-                      {!showUpload && (
-                        <Button onClick={addRecipient} size="sm" variant="outline">
-                          <Plus className="h-4 w-4 mr-1" />
-                          Add Recipient
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-
-                  {showUpload ? (
-                    <UploadRecipients onParsed={handleImported} />
-                  ) : (
-                    <>
-                      <div className="space-y-3 max-h-96 overflow-y-auto">
-                        {recipients.map((r, idx) => (
-                          <div key={r.id} className="flex gap-2 items-start p-3 rounded-lg border border-border">
-                            <div className="flex-1 space-y-2">
-                              <input
-                                className={inputClass}
-                                placeholder={`Wallet address ${idx + 1}`}
-                                value={r.address}
-                                onChange={(e) => updateRecipient(r.id, "address", (e.target as HTMLInputElement).value)}
-                              />
-                              <input
-                                className={inputClass}
-                                type="number"
-                                placeholder={`Amount (${selectedToken})`}
-                                value={r.amount}
-                                onChange={(e) => updateRecipient(r.id, "amount", (e.target as HTMLInputElement).value)}
-                                min="0"
-                                step="0.01"
-                              />
-                            </div>
-                            {recipients.length > 1 && (
-                              <Button onClick={() => removeRecipient(r.id)} size="icon" variant="ghost" className="mt-1">
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="p-3 rounded-lg bg-muted/50 space-y-1">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Total Recipients:</span>
-                          <span className="font-medium">{recipients.length}</span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Total Amount:</span>
-                          <span className="font-medium">{totalAmount().toFixed(2)} {selectedToken}</span>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <Button onClick={handleNext} className="w-full" size="lg">
-                  Next: Review
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </CardContent>
-            </Card>
+          {step === 1 && isConnected && isCorrectNetwork && (
+            <RecipientForm
+              selectedToken={selectedToken}
+              recipients={recipients}
+              showUpload={showUpload}
+              balance={getBalance()}
+              totalAmount={totalAmount()}
+              onTokenChange={(token) => setSelectedToken(token as TokenSymbol)}
+              onAddRecipient={addRecipient}
+              onRemoveRecipient={removeRecipient}
+              onUpdateRecipient={updateRecipient}
+              onToggleUpload={() => setShowUpload((v) => !v)}
+              onImported={handleImported}
+              onNext={handleNext}
+              tokens={Object.values(TOKENS)}
+            />
           )}
 
-          {/* Step 2: Review */}
           {step === 2 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Review Batch</CardTitle>
-                <CardDescription>Confirm recipients and total before sending</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="rounded-lg border border-border overflow-hidden">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 bg-muted/50 text-xs font-medium text-muted-foreground px-3 py-2">
-                    <div>Address</div>
-                    <div>Amount</div>
-                    <div className="hidden sm:block">Token</div>
-                  </div>
-                  <div className="divide-y">
-                    {recipients.map((r) => (
-                      <div key={r.id} className="grid grid-cols-2 sm:grid-cols-3 px-3 py-2 text-sm">
-                        <div className="font-mono break-all pr-3">{r.address}</div>
-                        <div>
-                          {r.amount} {selectedToken}
-                        </div>
-                        <div className="hidden sm:block">{selectedToken}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-lg bg-muted/50 space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Total Recipients:</span>
-                    <span className="font-medium">{recipients.length}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Total Amount:</span>
-                    <span className="font-medium">{totalAmount().toFixed(2)} {selectedToken}</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setStep(1)}>
-                    Back
-                  </Button>
-                  <Button className="flex-1" onClick={handleNext} disabled={isSubmitting}>
-                    {isSubmitting ? "Submitting..." : "Confirm & Submit (Simulated)"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <ReviewStep
+              selectedToken={selectedToken}
+              recipients={recipients}
+              balance={getBalance()}
+              totalAmount={totalAmount()}
+              needsApproval={needsApproval()}
+              isApproving={isApproving}
+              isApprovingConfirming={isApprovingConfirming}
+              isPending={isPending}
+              isConfirming={isConfirming}
+              onBack={() => setStep(1)}
+              onApprove={handleApprove}
+              onSubmit={handleNext}
+            />
           )}
 
-          {/* Step 3: Success */}
           {step === 3 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Batch Submitted</CardTitle>
-                <CardDescription>Your batch has been submitted (simulation)</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="p-4 rounded-lg bg-gradient-to-br from-success/10 to-accent/10 border border-success/20">
-                  <div className="text-sm text-muted-foreground mb-2">Summary</div>
-                  <div className="flex justify-between text-sm">
-                    <span>Total Recipients</span>
-                    <span className="font-medium">{recipients.length}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Total Amount</span>
-                    <span className="font-medium">{totalAmount().toFixed(2)} {selectedToken}</span>
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={downloadCSV}>
-                    Export CSV
-                  </Button>
-                  <Button
-                    className="flex-1"
-                    variant="outline"
-                    onClick={() => {
-                      setStep(1);
-                      setRecipients([{ id: "1", address: "", amount: "" }]);
-                    }}
-                  >
-                    New Batch
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <SuccessStep
+              selectedToken={selectedToken}
+              recipientCount={recipients.length}
+              totalAmount={totalAmount()}
+              txHash={txHash}
+              onDownloadCSV={downloadCSV}
+              onNewBatch={() => {
+                setStep(1);
+                setRecipients([{ id: "1", address: "", amount: "" }]);
+              }}
+            />
           )}
         </div>
       </div>
     </div>
   );
 }
-
