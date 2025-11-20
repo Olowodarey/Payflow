@@ -34,9 +34,17 @@ contract BatchTf is Initializable, PausableUpgradeable, AccessControlUpgradeable
      * @dev Prevents a contract from calling itself, directly or indirectly.
      */
     modifier nonReentrant() {
+        _nonReentrantBefore();
+        _;
+        _nonReentrantAfter();
+    }
+
+    function _nonReentrantBefore() internal {
         require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
         _status = _ENTERED;
-        _;
+    }
+
+    function _nonReentrantAfter() internal {
         _status = _NOT_ENTERED;
     }
 

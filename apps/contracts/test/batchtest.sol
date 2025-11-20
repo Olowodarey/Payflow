@@ -3,7 +3,6 @@ pragma solidity ^0.8.27;
 
 import {Test, console} from "forge-std/Test.sol";
 import {BatchTf} from "../src/batchtf.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 // Mock ERC20 token for testing
